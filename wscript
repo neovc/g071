@@ -32,7 +32,7 @@ def options(ctx):
 
     down_libopencm3()
 
-    ctx.add_option('--arch', action='store', default='cortex-m0', help='MCU arch')
+    ctx.add_option('--arch', action='store', default='cortex-m0plus', help='MCU arch')
     ctx.add_option('--toolchain', action='store', default='arm-none-eabi-', help='Set toolchain prefix')
     ctx.add_option('--update', action='store_true', help='Update libopencm3 source')
 
@@ -48,9 +48,9 @@ def configure(ctx):
     ctx.find_program(ctx.options.toolchain + 'objcopy', var='OBJCOPY')
 
     # Generate build arguments
-    ctx.env.append_unique('CFLAGS', ['-Wall', '-DSTM32G0', '-fno-common', '-Os', '-mthumb', '-mcpu=cortex-m0', '-fno-exceptions', '-ffunction-sections', '-fdata-sections', '-Wempty-body', '-Wtype-limits', '-Wmissing-parameter-type', '-Wuninitialized', '-fno-strict-aliasing', '-Wno-unused-function', '-Wno-stringop-truncation', '-fsingle-precision-constant', '-MD'])
+    ctx.env.append_unique('CFLAGS', ['-Wall', '-DSTM32G0', '-fno-common', '-Os', '-mthumb', '-mcpu=cortex-m0plus', '-fno-exceptions', '-ffunction-sections', '-fdata-sections', '-Wempty-body', '-Wtype-limits', '-Wmissing-parameter-type', '-Wuninitialized', '-fno-strict-aliasing', '-Wno-unused-function', '-Wno-stringop-truncation', '-fsingle-precision-constant', '-MD'])
 
-    ctx.env.append_unique('LINKFLAGS', ['--static', '-nostartfiles', '-Wl,--gc-sections', '-mthumb', '-mcpu=cortex-m0'])
+    ctx.env.append_unique('LINKFLAGS', ['--static', '-nostartfiles', '-Wl,--gc-sections', '-mthumb', '-mcpu=cortex-m0plus'])
 
     ctx.env.append_unique('LDFLAGS', ['--specs=nano.specs', '-Wl,--start-group', '-lc', '-lgcc', '-lnosys', '-Wl,--end-group', '-lm'])
 
