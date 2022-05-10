@@ -57,7 +57,7 @@ def configure(ctx):
     ctx.env.append_unique('INCLUDES', ['../rtos/include', '../src', '../libopencm3/include'])
 
     # FreeRTOS
-    ctx.env.append_unique('FILES', ['rtos/*.c', 'src/g071.c'])
+    ctx.env.append_unique('FILES', ['rtos/*.c', 'src/printf.c', 'src/g071.c'])
 
     ctx.env.append_unique('LINKFLAGS', ['-T' + cwd + '/flash.ld', '-Wl,-Map=flash.map'])
 
