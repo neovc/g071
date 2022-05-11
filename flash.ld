@@ -155,3 +155,4 @@ SECTIONS
 
 PROVIDE(_stack = ORIGIN(ram) + LENGTH(ram));
 PROVIDE(__app_size__ = _bss_loadaddr - ORIGIN(rom));
+PROVIDE(__app_start__ = ORIGIN(rom));
