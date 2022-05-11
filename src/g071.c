@@ -31,6 +31,8 @@ int printf_(const char *format, ...);
 uint32_t rom_app_size = 0, app_start = 0;
 uint32_t calc_crc, orig_crc;
 
+int _write(int file, char *ptr, int len);
+
 #define std_printf printf_
 #define IRQ2NVIC_PRIOR(x)        ((x)<<4)
 
@@ -98,11 +100,11 @@ _putchar(char c)
 static void
 init_task(void *unused)
 {
-	std_printf("CALC 0x%x, ORIG 0x%x\n", calc_crc, orig_crc);
+	printf("CALC 0x%x %s ORIG 0x%x\n", (unsigned int) calc_crc, (calc_crc == orig_crc)?"=":"!=", (unsigned int) orig_crc);
 
 	while (1) {
 		iwdg_reset(); /* reset IWDG */
-		std_printf("TICK #%d\n", (int) xTaskGetTickCount());
+		printf("TICK #%d\n", (int) xTaskGetTickCount());
 		vTaskDelay(pdMS_TO_TICKS(2000));
 	}
 }
@@ -174,6 +176,23 @@ check_bin_file(uint32_t start, int size, uint32_t *crc, uint32_t *crc2)
 	}
 }
 
+#define USART_CONSOLE USART2
+
+int
+_write(int file, char *ptr, int len)
+{
+	int i;
+
+	if (file == STDOUT_FILENO || file == STDERR_FILENO) {
+		for (i = 0; i < len; i++) {
+			_putchar(ptr[i]);
+		}
+		return i;
+	}
+	errno = EIO;
+	return -1;
+}
+
 int
 main(void)
 {
@@ -197,7 +216,7 @@ main(void)
 	check_bin_file(app_start, rom_app_size, &calc_crc, &orig_crc);
 
 	if (pdPASS != xTaskCreate(init_task, "INIT", 500, NULL, 4, NULL)) {
-		std_printf("init task error\n");
+		printf("init task error\n");
 	}
 	vTaskStartScheduler();
 }
