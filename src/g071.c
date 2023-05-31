@@ -67,8 +67,8 @@ setup_usart2(void)
 	gpio_set_af(GPIOA, GPIO_AF1, GPIO2 | GPIO3);
 
 	/* can't has high priority than MAX_SYSCALL_INTERRUPT_PRIORITY */
-	nvic_set_priority(NVIC_USART2_IRQ, IRQ2NVIC_PRIOR(configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY + 1));
-	nvic_enable_irq(NVIC_USART2_IRQ);
+	nvic_set_priority(NVIC_USART2_LPUART2_IRQ, IRQ2NVIC_PRIOR(configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY + 1));
+	nvic_enable_irq(NVIC_USART2_LPUART2_IRQ);
 	usart_enable(USART2);
 	usart_set_mode(USART2, USART_MODE_TX_RX);
 }
@@ -100,12 +100,15 @@ _putchar(char c)
 static void
 init_task(void *unused)
 {
-	printf("CALC 0x%x %s ORIG 0x%x\n", (unsigned int) calc_crc, (calc_crc == orig_crc)?"=":"!=", (unsigned int) orig_crc);
+	int tick = 0, wait = 2000;
+	printf("APP CALC 0x%x %s ORIG 0x%x\n", (unsigned int) calc_crc, (calc_crc == orig_crc)?"=":"!=", (unsigned int) orig_crc);
 
 	while (1) {
+		tick = (int) xTaskGetTickCount();
+		wait = 2000 - (tick % 2000);
 		iwdg_reset(); /* reset IWDG */
-		printf("TICK #%d\n", (int) xTaskGetTickCount());
-		vTaskDelay(pdMS_TO_TICKS(2000));
+		printf("TICK #%d\n", tick);
+		vTaskDelay(pdMS_TO_TICKS(wait));
 	}
 }
 
