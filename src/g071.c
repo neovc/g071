@@ -33,8 +33,15 @@ uint32_t calc_crc, orig_crc;
 
 int _write(int file, char *ptr, int len);
 
+#define MAX_ARGS 5
+#define MAX_USART_RX_LEN 128
+
+char usart_rx_buf[MAX_USART_RX_LEN], gosh_prompt[10] = "G071> ";
+int usart_rx_len = 0;
+
 #define std_printf printf_
 #define IRQ2NVIC_PRIOR(x)        ((x)<<4)
+void help_cmd(int argc, char **argv);
 
 void
 setup_usart_speed(uint32_t usart, uint32_t baudrate)
@@ -51,26 +58,29 @@ setup_usart_speed(uint32_t usart, uint32_t baudrate)
 	/* don't enable usart tx/rx here to drop bogus data in tx/rx line */
 	/* usart_set_mode(usart, USART_MODE_TX_RX); */
 	usart_set_parity(usart, USART_PARITY_NONE);
-
-	/* Enable USART Receive interrupt. */
-	usart_enable_rx_interrupt(usart);
 }
 
 static void
-setup_usart2(void)
+setup_usart2(int irq_en)
 {
-	/* USART2, PA2 PA3, AF7 */
+	/* USART2, PA2 PA3, AF1 */
 	rcc_periph_clock_enable(RCC_GPIOA);
 	rcc_periph_clock_enable(RCC_USART2);
 
 	gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO2 | GPIO3);
 	gpio_set_af(GPIOA, GPIO_AF1, GPIO2 | GPIO3);
 
-	/* can't has high priority than MAX_SYSCALL_INTERRUPT_PRIORITY */
-	nvic_set_priority(NVIC_USART2_LPUART2_IRQ, IRQ2NVIC_PRIOR(configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY + 1));
-	nvic_enable_irq(NVIC_USART2_LPUART2_IRQ);
+	setup_usart_speed(USART2, 115200);
 	usart_enable(USART2);
 	usart_set_mode(USART2, USART_MODE_TX_RX);
+
+	if (irq_en) {
+		/* can't has high priority than MAX_SYSCALL_INTERRUPT_PRIORITY */
+		nvic_set_priority(NVIC_USART2_LPUART2_IRQ, IRQ2NVIC_PRIOR(configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY + 1));
+		nvic_enable_irq(NVIC_USART2_LPUART2_IRQ);
+		/* Enable USART Receive interrupt. */
+		usart_enable_rx_interrupt(USART2);
+	}
 }
 
 void
@@ -83,8 +93,10 @@ usart_timeout_putc(uint32_t usart, char c)
 
 #define USART_LOOP 10000
 	/* check usart's tx buffer is empty */
-	while ((i < USART_LOOP) && ((USART_ISR(usart) & USART_ISR_TXE) == 0))
+	while ((i < USART_LOOP) && ((USART_ISR(usart) & USART_ISR_TXE) == 0)) {
 		i ++;
+		taskYIELD();
+	}
 	if (i < USART_LOOP)
 		usart_send(usart, c);
 }
@@ -97,18 +109,186 @@ _putchar(char c)
 		usart_timeout_putc(USART2, '\r');
 }
 
+void
+console_puts(const char *ptr)
+{
+	int i = 0;
+	if (ptr == NULL)
+		return;
+
+	while (ptr[i]) {
+		_putchar(ptr[i]);
+		i ++;
+	}
+}
+
+typedef void (*command_handler_t)(int argc, char **argv);
+typedef struct {
+	const char *name;
+	command_handler_t handler;
+} command_t;
+
+void
+uptime_cmd(int argc, char **argv)
+{
+	int tick;
+
+	tick = (xTaskGetTickCount() / 1000);
+	printf("up %d secs\n", tick);
+}
+
+
+const command_t gosh_cmds[] = {
+	{
+		.name = "uptime",
+		.handler = uptime_cmd,
+	},
+	{
+		.name = "help",
+		.handler = help_cmd,
+	},
+};
+
+#define CMDS_SIZE (sizeof(gosh_cmds) / sizeof(gosh_cmds[0]))
+
+/* command handler */
+void
+process_cmd(char **argv, int argc)
+{
+	int i;
+
+	if (argc == 0 || argv == NULL)
+		return;
+
+	_putchar('\n');
+	for (i = 0; i < CMDS_SIZE; i ++) {
+		if (strcmp(argv[0], gosh_cmds[i].name) == 0) {
+			gosh_cmds[i].handler(argc, argv);
+			break;
+		}
+	}
+
+	if (i == CMDS_SIZE)
+		printf("unknow cmd: %s, argc = %d\n", argv[0], argc);
+}
+
+void
+help_cmd(int argc, char **argv)
+{
+	int i;
+
+	console_puts("avail cmds: ");
+	for (i = 0; i < CMDS_SIZE; i ++) {
+		console_puts(gosh_cmds[i].name);
+		_putchar(' ');
+	}
+	_putchar('\n');
+}
+
+int
+handle_console_input(char data)
+{
+	int finish = 0, i;
+
+	if (usart_rx_buf == NULL) /* buffer is not ready */
+		return 0;
+
+	if (data == 0x0) {
+		/* input NULL character */
+		usart_rx_len = 0;
+		return 0;
+	}
+
+	if (data == '\r' || data == '\n') {
+		/* end of line */
+		usart_rx_buf[usart_rx_len] = '\0';
+		finish = 1;
+	} else if ((data == 0x08) || (data == 0x7f)) {
+		/* backspace */
+		if (usart_rx_len > 0)
+			usart_rx_len --;
+	} else if (data == 0x17) { /* ^W Erase Word */
+		if (usart_rx_len > 0) {
+			for (i = usart_rx_len - 1; i >= 0; i --) {
+				if (usart_rx_buf[i] == ' ')
+					break;
+			}
+			if (i > 0)
+				usart_rx_len = i + 1;
+			else
+				usart_rx_len = 0;
+		}
+	} else if (data == 0x15) { /* ^U Erase Line */
+		usart_rx_len = 0;
+	} else {
+		usart_rx_buf[usart_rx_len ++] = data;
+	}
+
+	usart_rx_buf[usart_rx_len] = '\0'; /* terminate cmd line */
+	console_puts("\r"); /* clear current input buffer */
+	console_puts(gosh_prompt);
+	console_puts(usart_rx_buf);
+	return (finish == 1 || (usart_rx_len >= (MAX_USART_RX_LEN - 1)));
+}
+
+void
+generic_usart_handler(void *args)
+{
+	int argc, pos, finish = 0;
+	char c, *argv[MAX_ARGS], *p;
+	uint32_t usart = USART2;
+
+	console_puts(gosh_prompt); /* cmd line prefix */
+	while (1) {
+		if (!usart_get_flag(usart, USART_ISR_RXNE)) {
+			taskYIELD();
+			continue;
+		}
+
+		c = usart_recv(usart);
+		finish = handle_console_input(c);
+
+		if (finish == 0)
+			continue;
+		argc = pos = 0;
+		/* to find count of arguments */
+		while (pos < usart_rx_len && argc < MAX_ARGS) {
+			/* strip prefix ' ' & '\t' */
+			while (pos < usart_rx_len && ((usart_rx_buf[pos] == ' ') || (usart_rx_buf[pos] == '\t')))
+				pos ++;
+
+			if (pos == usart_rx_len || usart_rx_buf[pos] == '\0')
+				break;
+			p = usart_rx_buf + pos;
+			argv[argc ++] = p;
+
+			while (pos < usart_rx_len && ((usart_rx_buf[pos] != ' ') && (usart_rx_buf[pos] != '\t')))
+				pos ++;
+
+			if (pos == usart_rx_len) break;
+			else usart_rx_buf[pos ++] = '\0';
+		}
+
+		process_cmd(argv, argc);
+		/* process cmd line */
+		usart_rx_len = 0;
+		console_puts("\r"); /* clear current input buffer */
+		console_puts(gosh_prompt); /* cmd line prefix */
+	}
+}
+
 static void
 init_task(void *unused)
 {
-	int tick = 0, wait = 2000;
 	printf("APP CALC 0x%x %s ORIG 0x%x\n", (unsigned int) calc_crc, (calc_crc == orig_crc)?"=":"!=", (unsigned int) orig_crc);
 
+	if (pdPASS != xTaskCreate(generic_usart_handler, "UART", 800, NULL, 2, NULL)) {
+		printf("USART TASK ERROR\n");
+	}
+
 	while (1) {
-		tick = (int) xTaskGetTickCount();
-		wait = 2000 - (tick % 2000);
-		iwdg_reset(); /* reset IWDG */
-		printf("TICK #%d\n", tick);
-		vTaskDelay(pdMS_TO_TICKS(wait));
+		iwdg_reset(); /* feed iwdg, reset IWDG */
+		vTaskDelay(pdMS_TO_TICKS(2000));
 	}
 }
 
@@ -204,8 +384,7 @@ main(void)
 	flash_set_ws((RUNNING_CLOCK > 48?2:1));
 	/* eanble flash's ICache */
 	flash_icache_enable();
-	setup_usart2();
-	setup_usart_speed(USART2, 115200);
+	setup_usart2(0);
 
 	/* enable IWDG before reading parameter from flash */
 	iwdg_set_period_ms(6000); /* 6s */
