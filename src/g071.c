@@ -91,7 +91,7 @@ usart_timeout_putc(uint32_t usart, char c)
 	if (usart == 0)
 		return;
 
-#define USART_LOOP 10000
+#define USART_LOOP 100
 	/* check usart's tx buffer is empty */
 	while ((i < USART_LOOP) && ((USART_ISR(usart) & USART_ISR_TXE) == 0)) {
 		i ++;
