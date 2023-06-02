@@ -15,6 +15,7 @@ cwd = os.getcwd()
 now = datetime.now()
 bin_date = now.strftime("%y%m%d")
 bin_target = "st." + bin_date + ".bin"
+appendcrc_bin = cwd + '/' + out + '/append_crc'
 
 libopencm3_revision = os.popen('cd libopencm3 && git log --pretty=format:"%h" --abbrev=8 2> /dev/null | head -1 || echo {0}'.format("1.")).read().strip()
 libopencm3_revision_date = os.popen('cd libopencm3 && git log --pretty=format:"%ad" --date=format:"%Y%m%d" 2>/dev/null | head -1 | cut -f 1 -d\' \'').read().strip()
@@ -24,6 +25,11 @@ def down_libopencm3():
         print('begin downloading libopencm3 library...\n')
         os.system('git clone git@github.com:libopencm3/libopencm3')
 
+def build_appendcrc():
+    if not os.path.exists(appendcrc_bin):
+        print('build append_crc ...\n')
+        os.system("gcc -O2 -o " + appendcrc_bin + " src/append_crc.c")
+
 def update_libopencm3():
     os.system('cd libopencm3 && git pull && make TARGETS=stm32/g0')
 
@@ -31,6 +37,7 @@ def options(ctx):
     ctx.load('gcc')
 
     down_libopencm3()
+    build_appendcrc()
 
     ctx.add_option('--arch', action='store', default='cortex-m0plus', help='MCU arch')
     ctx.add_option('--toolchain', action='store', default='arm-none-eabi-', help='Set toolchain prefix')
@@ -43,7 +50,7 @@ def configure(ctx):
 
     # Locate programs
     ctx.find_program('st-flash', var='STFLASH')
-    ctx.find_program('append_crc', var='APPENDCRC')
+    ctx.find_program(appendcrc_bin, var='APPENDCRC')
     ctx.find_program(ctx.options.toolchain + 'size', var='SIZE')
     ctx.find_program(ctx.options.toolchain + 'objcopy', var='OBJCOPY')
 
