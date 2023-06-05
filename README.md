@@ -2,6 +2,21 @@
 
 simple program to test [stm32 nucleo-g071 board](https://www.st.com/en/evaluation-tools/nucleo-g071rb.html)
 
+# Install arm gcc cross compiler
+  [Download gcc ver 8-2019-q3-update for linux!](https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-rm/8-2019q3/RC1.1/gcc-arm-none-eabi-8-2019-q3-update-linux.tar.bz2)
+
+```
+  download arm gcc toolchain from https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads
+  recommend gcc-8 or gcc-10, don't use gcc-9
+  put arm-none-eabi-gcc in PATH
+```
+
+# Install stlink-utils
+
+```
+sudo apt install stlink-tools
+```
+
 # Build
 
 ```
