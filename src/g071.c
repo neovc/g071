@@ -31,7 +31,7 @@ uint32_t rom_app_size = 0, app_start = 0;
 uint32_t calc_crc, orig_crc;
 
 int _write(int file, char *ptr, int len);
-uint8_t freertos_started = 0;
+uint8_t freertos_started = 0, feed_iwdg = 1;
 
 #define MAX_ARGS 5
 #define MAX_USART_RX_LEN 128
@@ -138,6 +138,11 @@ uptime_cmd(int argc, char **argv)
 	printf("up %d secs\n", tick);
 }
 
+void
+reset_cmd(int argc, char **argv)
+{
+	feed_iwdg = 0;
+}
 
 const command_t gosh_cmds[] = {
 	{
@@ -147,6 +152,10 @@ const command_t gosh_cmds[] = {
 	{
 		.name = "help",
 		.handler = help_cmd,
+	},
+	{
+		.name = "reset",
+		.handler = reset_cmd,
 	},
 };
 
@@ -290,7 +299,8 @@ init_task(void *unused)
 	}
 
 	while (1) {
-		iwdg_reset(); /* feed iwdg, reset IWDG */
+		if (feed_iwdg)
+			iwdg_reset(); /* feed iwdg, reset IWDG */
 		vTaskDelay(pdMS_TO_TICKS(2000));
 	}
 }
