@@ -26,12 +26,12 @@
 
 extern const struct rcc_clock_scale rcc_clock_config[];
 extern unsigned __app_size__, __app_start__;
-int printf_(const char *format, ...);
 
 uint32_t rom_app_size = 0, app_start = 0;
 uint32_t calc_crc, orig_crc;
 
 int _write(int file, char *ptr, int len);
+uint8_t freertos_started = 0;
 
 #define MAX_ARGS 5
 #define MAX_USART_RX_LEN 128
@@ -91,11 +91,12 @@ usart_timeout_putc(uint32_t usart, char c)
 	if (usart == 0)
 		return;
 
-#define USART_LOOP 100
+#define USART_LOOP 1000
 	/* check usart's tx buffer is empty */
 	while ((i < USART_LOOP) && ((USART_ISR(usart) & USART_ISR_TXE) == 0)) {
 		i ++;
-		taskYIELD();
+		if (freertos_started == 1)
+			taskYIELD();
 	}
 	if (i < USART_LOOP)
 		usart_send(usart, c);
@@ -280,6 +281,8 @@ generic_usart_handler(void *args)
 static void
 init_task(void *unused)
 {
+	freertos_started = 1;
+
 	printf("APP CALC 0x%x %s ORIG 0x%x\n", (unsigned int) calc_crc, (calc_crc == orig_crc)?"=":"!=", (unsigned int) orig_crc);
 
 	if (pdPASS != xTaskCreate(generic_usart_handler, "UART", 800, NULL, 2, NULL)) {
