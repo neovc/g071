@@ -98,7 +98,7 @@ read_file(char *name, int *filesize)
 	return dst;
 }
 
-#define MAGIC "TYUD"
+#define MAGIC "UPBN"
 
 int
 main(int argc, char **argv)

@@ -365,7 +365,7 @@ check_bin_file(uint32_t start, int size, uint32_t *crc, uint32_t *crc2)
 	*crc = csp_crc32_memory((uint8_t *) p, size);
 	memcpy(crc2, p + size + 4, 4);
 	/* check magic of flash binary */
-#define MAGIC "TYUD"
+#define MAGIC "UPBN"
 	if (memcmp(p + size, MAGIC, 4) != 0) {
 		*crc = -100;
 	}
