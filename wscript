@@ -37,7 +37,6 @@ def options(ctx):
     ctx.load('gcc')
 
     down_libopencm3()
-    build_appendcrc()
 
     ctx.add_option('--arch', action='store', default='cortex-m0plus', help='MCU arch')
     ctx.add_option('--toolchain', action='store', default='arm-none-eabi-', help='Set toolchain prefix')
@@ -75,6 +74,7 @@ def build(ctx):
     # Linker script
     hex_target = 'st.hex'
 
+    build_appendcrc()
     ctx.program(
         source=ctx.path.ant_glob(ctx.env.FILES),
         target='st.elf',
