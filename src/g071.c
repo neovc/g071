@@ -34,35 +34,14 @@ int uptime = 0;
 int _write(int file, char *ptr, int len);
 uint8_t freertos_started = 0, feed_iwdg = 1;
 
-#define MAX_ARGS 5
-#define MAX_USART_RX_LEN 128
+#define MAX_ARGS 10
+#define USART_CONSOLE USART2
 
-char usart_rx_buf[MAX_USART_RX_LEN], gosh_prompt[10] = "G071> ";
-int usart_rx_len = 0;
-
-#define std_printf printf_
 #define IRQ2NVIC_PRIOR(x)        ((x)<<4)
 void help_cmd(int argc, char **argv);
 
-void
-setup_usart_speed(uint32_t usart, uint32_t baudrate)
-{
-	if ((usart != USART1) && (usart != USART2) && (usart != USART3))
-		return;
-
-	if (baudrate == 0)
-		baudrate = 115200;
-
-	usart_set_baudrate(usart, baudrate);
-	usart_set_databits(usart, 8);
-	usart_set_stopbits(usart, USART_STOPBITS_1);
-	/* don't enable usart tx/rx here to drop bogus data in tx/rx line */
-	/* usart_set_mode(usart, USART_MODE_TX_RX); */
-	usart_set_parity(usart, USART_PARITY_NONE);
-}
-
 static void
-setup_usart2(int irq_en)
+setup_usart2(void)
 {
 	/* USART2, PA2 PA3, AF1 */
 	rcc_periph_clock_enable(RCC_GPIOA);
@@ -71,57 +50,172 @@ setup_usart2(int irq_en)
 	gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO2 | GPIO3);
 	gpio_set_af(GPIOA, GPIO_AF1, GPIO2 | GPIO3);
 
-	setup_usart_speed(USART2, 115200);
-	usart_enable(USART2);
+	usart_set_baudrate(USART2, 115200);
+	usart_set_databits(USART2, 8);
+	usart_set_stopbits(USART2, USART_STOPBITS_1);
 	usart_set_mode(USART2, USART_MODE_TX_RX);
+	usart_set_parity(USART2, USART_PARITY_NONE);
 
-	if (irq_en) {
-		/* can't has high priority than MAX_SYSCALL_INTERRUPT_PRIORITY */
-		nvic_set_priority(NVIC_USART2_LPUART2_IRQ, IRQ2NVIC_PRIOR(configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY + 1));
-		nvic_enable_irq(NVIC_USART2_LPUART2_IRQ);
-		/* Enable USART Receive interrupt. */
-		usart_enable_rx_interrupt(USART2);
-	}
+	/* can't has high priority than MAX_SYSCALL_INTERRUPT_PRIORITY */
+	nvic_set_priority(NVIC_USART2_LPUART2_IRQ, IRQ2NVIC_PRIOR(configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY + 1));
+	nvic_enable_irq(NVIC_USART2_LPUART2_IRQ);
+	/* Enable USART Receive interrupt. */
+	usart_enable_rx_interrupt(USART2);
+
+	usart_enable(USART2);
 }
 
 void
-usart_timeout_putc(uint32_t usart, char c)
+console_putc(const char c)
 {
 	int i = 0;
-
-	if (usart == 0)
-		return;
 
 #define USART_LOOP 1000
 	/* check usart's tx buffer is empty */
-	while ((i < USART_LOOP) && ((USART_ISR(usart) & USART_ISR_TXE) == 0)) {
+	while ((i < USART_LOOP) && ((USART_ISR(USART_CONSOLE) & USART_ISR_TXE) == 0))
 		i ++;
-		if (freertos_started == 1)
-			taskYIELD();
-	}
 	if (i < USART_LOOP)
-		usart_send(usart, c);
+		usart_send(USART_CONSOLE, c);
 }
 
+/*
+ * void console_puts(char *s)
+ *
+ * Send a string to the console, one character at a time, return
+ * after the last character, as indicated by a NUL character, is
+ * reached.
+ */
 void
-_putchar(char c)
-{
-	usart_timeout_putc(USART2, c);
-	if (c == '\n')
-		usart_timeout_putc(USART2, '\r');
-}
-
-void
-console_puts(const char *ptr)
+console_puts(const char *s)
 {
 	int i = 0;
-	if (ptr == NULL)
-		return;
 
-	while (ptr[i]) {
-		_putchar(ptr[i]);
+	if (s == NULL) return;
+
+	while (s[i] != '\000') {
+		console_putc(s[i]);
+		/* Add in a carraige return, after sending line feed */
+		if (s[i] == '\n')
+			console_putc('\r');
 		i ++;
 	}
+}
+
+/* for tiny printf.c */
+void
+_putchar(const char c)
+{
+	console_putc(c);
+	if (c == '\n')
+		console_putc('\r');
+}
+
+/* This is a ring buffer to holding characters as they are typed
+ * it maintains both the place to put the next character received
+ * from the UART, and the place where the last character was
+ * read by the program. See the README file for a discussion of
+ * the failure semantics.
+ */
+
+#define RECV_BUF_SIZE	128		/* Arbitrary buffer size */
+char usart_rx_buf[RECV_BUF_SIZE];
+volatile int recv_ndx_nxt = 0;		/* Next place to store */
+volatile int recv_ndx_cur = 0;		/* Next place to read */
+
+/* For interrupt handling we add a new function which is called
+ * when recieve interrupts happen. The name (usart2_isr) is created
+ * by the irq.json file in libopencm3 calling this interrupt for
+ * USART2 'usart2', adding the suffix '_isr', and then weakly binding
+ * it to the 'do nothing' interrupt function in vec.c.
+ *
+ * By defining it in this file the linker will override that weak
+ * binding and instead bind it here, but you have to get the name
+ * right or it won't work. And you'll wonder where your interrupts
+ * are going.
+ */
+void
+usart2_lpuart2_isr(void)
+{
+	uint32_t r;
+	int i;
+
+	do {
+		r = USART_ISR(USART_CONSOLE);
+		if (r & USART_ISR_RXNE) {
+			usart_rx_buf[recv_ndx_nxt] = USART_RDR(USART_CONSOLE) & USART_RDR_MASK;
+
+			/* Check for "overrun" */
+			i = (recv_ndx_nxt + 1) % RECV_BUF_SIZE;
+			if (i != recv_ndx_cur) {
+				recv_ndx_nxt = i;
+			}
+		}
+	} while ((r & USART_ISR_RXNE) != 0); /* can read back-to-back interrupts */
+}
+
+/*
+ * char = console_getc(int wait)
+ *
+ * Check the console for a character. If the wait flag is
+ * non-zero. Continue checking until a character is received
+ * otherwise return 0 if called and no character was available.
+ *
+ * The implementation is a bit different however, now it looks
+ * in the ring buffer to see if a character has arrived.
+ */
+char
+console_getc(int wait)
+{
+	char c = 0;
+
+	while ((wait != 0) && (recv_ndx_cur == recv_ndx_nxt)) {
+		if (freertos_started == 1) taskYIELD();
+	}
+
+	if (recv_ndx_cur != recv_ndx_nxt) {
+		c = usart_rx_buf[recv_ndx_cur];
+		recv_ndx_cur = (recv_ndx_cur + 1) % RECV_BUF_SIZE;
+	}
+	return c;
+}
+
+/*
+ * int console_gets(char *s, int len)
+ *
+ * Wait for a string to be entered on the console, limited
+ * support for editing characters (back space and delete)
+ * end when a <CR> character is received.
+ */
+int
+console_gets(char *s, int len)
+{
+	char *t = s, c;
+
+	if (s == NULL || len <= 0)
+		return 0;
+
+	*t = '\000';
+	/* read until a <CR> is received */
+	while ((c = console_getc(1)) != '\r') {
+		if ((c == '\010') || (c == 0x7f)) {
+			/* 0x8 = backspace, 0x7f = delete */
+			if (t > s) {
+				/* send ^H ^H to erase previous character */
+				console_puts("\010 \010");
+				t --;
+			}
+		} else {
+			*t = c;
+			_putchar(c);
+			if ((t - s) < len) {
+				t ++;
+			}
+		}
+		/* update end of string with NUL */
+		*t = '\000';
+	}
+	_putchar('\n'); /* print last \n' chars */
+	return (t - s);
 }
 
 typedef void (*command_handler_t)(int argc, char **argv);
@@ -160,27 +254,6 @@ const command_t gosh_cmds[] = {
 
 #define CMDS_SIZE (sizeof(gosh_cmds) / sizeof(gosh_cmds[0]))
 
-/* command handler */
-void
-process_cmd(char **argv, int argc)
-{
-	int i;
-
-	if (argc == 0 || argv == NULL)
-		return;
-
-	_putchar('\n');
-	for (i = 0; i < CMDS_SIZE; i ++) {
-		if (strcmp(argv[0], gosh_cmds[i].name) == 0) {
-			gosh_cmds[i].handler(argc, argv);
-			break;
-		}
-	}
-
-	if (i == CMDS_SIZE)
-		printf("unknow cmd: %s, argc = %d\n", argv[0], argc);
-}
-
 void
 help_cmd(int argc, char **argv)
 {
@@ -194,95 +267,48 @@ help_cmd(int argc, char **argv)
 	_putchar('\n');
 }
 
-int
-handle_console_input(char data)
-{
-	int finish = 0, i;
-
-	if (usart_rx_buf == NULL) /* buffer is not ready */
-		return 0;
-
-	if (data == 0x0) {
-		/* input NULL character */
-		usart_rx_len = 0;
-		return 0;
-	}
-
-	if (data == '\r' || data == '\n') {
-		/* end of line */
-		usart_rx_buf[usart_rx_len] = '\0';
-		finish = 1;
-	} else if ((data == 0x08) || (data == 0x7f)) {
-		/* backspace */
-		if (usart_rx_len > 0)
-			usart_rx_len --;
-	} else if (data == 0x17) { /* ^W Erase Word */
-		if (usart_rx_len > 0) {
-			for (i = usart_rx_len - 1; i >= 0; i --) {
-				if (usart_rx_buf[i] == ' ')
-					break;
-			}
-			if (i > 0)
-				usart_rx_len = i + 1;
-			else
-				usart_rx_len = 0;
-		}
-	} else if (data == 0x15) { /* ^U Erase Line */
-		usart_rx_len = 0;
-	} else {
-		usart_rx_buf[usart_rx_len ++] = data;
-	}
-
-	usart_rx_buf[usart_rx_len] = '\0'; /* terminate cmd line */
-	console_puts("\r"); /* clear current input buffer */
-	console_puts(gosh_prompt);
-	console_puts(usart_rx_buf);
-	return (finish == 1 || (usart_rx_len >= (MAX_USART_RX_LEN - 1)));
-}
-
 void
-generic_usart_handler(void *args)
+usart2_cmd_handler(void *args)
 {
-	int argc, pos, finish = 0;
-	char c, *argv[MAX_ARGS], *p;
-	uint32_t usart = USART2;
+	char gosh_prompt[] = "G071> ";
+	char cmd[RECV_BUF_SIZE], *argv[MAX_ARGS], *p;
+	int len, i, argc, pos;
 
-	console_puts(gosh_prompt); /* cmd line prefix */
 	while (1) {
-		if (!usart_get_flag(usart, USART_ISR_RXNE)) {
-			taskYIELD();
-			continue;
-		}
-
-		c = usart_recv(usart);
-		finish = handle_console_input(c);
-
-		if (finish == 0)
+		console_puts(gosh_prompt);
+		len = console_gets(cmd, RECV_BUF_SIZE);
+		if (len == 0)
 			continue;
 		argc = pos = 0;
 		/* to find count of arguments */
-		while (pos < usart_rx_len && argc < MAX_ARGS) {
+		while (pos < len && argc < MAX_ARGS) {
 			/* strip prefix ' ' & '\t' */
-			while (pos < usart_rx_len && ((usart_rx_buf[pos] == ' ') || (usart_rx_buf[pos] == '\t')))
+			while (pos < len && ((cmd[pos] == ' ') || (cmd[pos] == '\t')))
 				pos ++;
 
-			if (pos == usart_rx_len || usart_rx_buf[pos] == '\0')
+			if (pos == len || cmd[pos] == '\0')
 				break;
-			p = usart_rx_buf + pos;
+			p = cmd + pos;
 			argv[argc ++] = p;
 
-			while (pos < usart_rx_len && ((usart_rx_buf[pos] != ' ') && (usart_rx_buf[pos] != '\t')))
+			while (pos < len && ((cmd[pos] != ' ') && (cmd[pos] != '\t')))
 				pos ++;
 
-			if (pos == usart_rx_len) break;
-			else usart_rx_buf[pos ++] = '\0';
+			if (pos == len) break;
+			else cmd[pos ++] = '\0';
 		}
 
-		process_cmd(argv, argc);
-		/* process cmd line */
-		usart_rx_len = 0;
-		console_puts("\r"); /* clear current input buffer */
-		console_puts(gosh_prompt); /* cmd line prefix */
+		if (argc > 0) {
+			for (i = 0; i < CMDS_SIZE; i ++) {
+				if (strcmp(argv[0], gosh_cmds[i].name) == 0) {
+					gosh_cmds[i].handler(argc, argv);
+					break;
+				}
+			}
+
+			if (i == CMDS_SIZE)
+				printf("unknow cmd: %s, argc = %d\n", argv[0], argc);
+		}
 	}
 }
 
@@ -293,7 +319,7 @@ init_task(void *unused)
 
 	printf("APP CALC 0x%x %s ORIG 0x%x\n", (unsigned int) calc_crc, (calc_crc == orig_crc)?"=":"!=", (unsigned int) orig_crc);
 
-	if (pdPASS != xTaskCreate(generic_usart_handler, "UART", 800, NULL, 2, NULL)) {
+	if (pdPASS != xTaskCreate(usart2_cmd_handler, "UART", 400, NULL, 2, NULL)) {
 		printf("USART TASK ERROR\n");
 	}
 
@@ -371,8 +397,6 @@ check_bin_file(uint32_t start, int size, uint32_t *crc, uint32_t *crc2)
 	}
 }
 
-#define USART_CONSOLE USART2
-
 int
 _write(int file, char *ptr, int len)
 {
@@ -396,7 +420,7 @@ main(void)
 	flash_set_ws((RUNNING_CLOCK > 48?2:1));
 	/* eanble flash's ICache */
 	flash_icache_enable();
-	setup_usart2(0);
+	setup_usart2();
 
 	/* enable IWDG before reading parameter from flash */
 	iwdg_set_period_ms(3000); /* 3s */
