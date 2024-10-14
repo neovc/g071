@@ -29,6 +29,7 @@ extern unsigned __app_size__, __app_start__;
 
 uint32_t rom_app_size = 0, app_start = 0;
 uint32_t calc_crc, orig_crc;
+int uptime = 0;
 
 int _write(int file, char *ptr, int len);
 uint8_t freertos_started = 0, feed_iwdg = 1;
@@ -132,10 +133,8 @@ typedef struct {
 void
 uptime_cmd(int argc, char **argv)
 {
-	int tick;
-
-	tick = (xTaskGetTickCount() / 1000);
-	printf("up %d secs\n", tick);
+	uptime = xTaskGetTickCount() / (pdMS_TO_TICKS(1000));
+	printf("built at %s %s, up %d secs, FreeRTOS %s\n", __DATE__, __TIME__, uptime, tskKERNEL_VERSION_NUMBER);
 }
 
 void
@@ -400,7 +399,7 @@ main(void)
 	setup_usart2(0);
 
 	/* enable IWDG before reading parameter from flash */
-	iwdg_set_period_ms(6000); /* 6s */
+	iwdg_set_period_ms(3000); /* 3s */
 
 	/* START IWDG */
 	iwdg_start();
