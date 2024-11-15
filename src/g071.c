@@ -32,7 +32,8 @@ uint32_t calc_crc, orig_crc;
 int uptime = 0;
 
 int _write(int file, char *ptr, int len);
-uint8_t freertos_started = 0, feed_iwdg = 1;
+uint8_t freertos_started = 0, feed_iwdg = 1, boot_cause = 0;
+uint8_t get_boot_cause(void);
 
 #define MAX_ARGS 10
 #define USART_CONSOLE USART2
@@ -228,7 +229,7 @@ void
 uptime_cmd(int argc, char **argv)
 {
 	uptime = xTaskGetTickCount() / (pdMS_TO_TICKS(1000));
-	printf("built at %s %s, up %d secs, FreeRTOS %s\n", __DATE__, __TIME__, uptime, tskKERNEL_VERSION_NUMBER);
+	printf("built at %s %s, up %d secs, FreeRTOS %s, boot cause #%d\n", __DATE__, __TIME__, uptime, tskKERNEL_VERSION_NUMBER, boot_cause);
 }
 
 void
@@ -422,6 +423,8 @@ main(void)
 	flash_icache_enable();
 	setup_usart2();
 
+	boot_cause = get_boot_cause();
+
 	/* enable IWDG before reading parameter from flash */
 	iwdg_set_period_ms(3000); /* 3s */
 
@@ -456,3 +459,38 @@ void sys_tick_handler(void) {
 	xPortSysTickHandler();
 }
 
+uint8_t
+get_boot_cause(void)
+{
+	uint8_t r;
+
+	r = (RCC_CSR >> 24) & 0xff;
+
+	RCC_CSR |= RCC_CSR_RMVF; /* clear reset flag */
+
+	if (r & 0x20) {
+		/* iwdg reset */
+		return 1;
+	} else if (r & 0x10) {
+		/* software reset */
+		return 2;
+	} else if (r & 0x40) {
+		/* window watchdog reset */
+		return 3;
+	} else if (r & 0x80) {
+		/* lower power reset */
+		return 4;
+	} else if (r & 0x01) {
+		/* firewall reset */
+		return 5;
+	} else if (r & 0x02) {
+		/* option byte loader reset */
+		return 6;
+	} else if (r & 0x0C) {
+		/* power off/on, hardware watchdog */
+		return 7;
+	} else {
+		/* other reset */
+		return 0xff;
+	}
+}
